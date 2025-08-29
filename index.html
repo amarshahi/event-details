@@ -1,0 +1,369 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Event Countdown & Timeline</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- React 18 UMD + ReactDOM -->
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+  <!-- Babel standalone to transpile JSX in the browser -->
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <style>
+    /* Optional: clamp utility if not available */ 
+    .line-clamp-2 {
+      overflow: hidden;
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+    }
+  </style>
+</head>
+<body class="bg-orange-50">
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const { useEffect, useMemo, useState } = React;
+
+    // ---------- Utility helpers ----------
+    const MS_PER_DAY = 24 * 60 * 60 * 1000;
+
+    function startOfDay(date) {
+      const d = new Date(date);
+      return new Date(d.getFullYear(), d.getMonth(), d.getDate());
+    }
+
+    function daysBetween(fromDate, toDate) {
+      const a = startOfDay(fromDate).getTime();
+      const b = startOfDay(toDate).getTime();
+      return Math.round((b - a) / MS_PER_DAY);
+    }
+
+    function labelForEvent(date) {
+      const today = new Date();
+      const diff = daysBetween(today, date);
+      if (diff === 0) return { badge: "Today", tone: "bg-yellow-100 text-yellow-800" };
+      if (diff > 0) return { badge: diff + " day" + (diff === 1 ? "" : "s") + " left", tone: "bg-green-100 text-green-800" };
+      const past = Math.abs(diff);
+      return { badge: past + " day" + (past === 1 ? "" : "s") + " ago", tone: "bg-gray-200 text-gray-800" };
+    }
+
+    function prettyDate(date) {
+      try {
+        const d = new Date(date);
+        return d.toLocaleDateString(undefined, {
+          year: "numeric",
+          month: "short",
+          day: "2-digit",
+          weekday: "short",
+        });
+      } catch (e) {
+        return String(date);
+      }
+    }
+
+    function normalizeName(s) { return (s || "").trim(); }
+
+    function offsetDate(deltaDays) {
+      const t = startOfDay(new Date());
+      t.setDate(t.getDate() + deltaDays);
+      return t.toISOString().slice(0, 10);
+    }
+
+    // ---------- Demo seed data ----------
+    const DEMO_EVENTS = [
+      { id: (crypto?.randomUUID?.() || String(Math.random())), name: "RISEN Final Workshop", date: offsetDate(7), notes: "Project close‑out sync" },
+      { id: (crypto?.randomUUID?.() || String(Math.random())), name: "Youth Skills Day Recap", date: offsetDate(-45), notes: "Social post follow‑ups" },
+      { id: (crypto?.randomUUID?.() || String(Math.random())), name: "Grant Submission – Project RED", date: offsetDate(1), notes: "Submit by 4:00 PM" },
+      { id: (crypto?.randomUUID?.() || String(Math.random())), name: "Vaping Awareness Pilot", date: offsetDate(-6), notes: "School #3 debrief" },
+      { id: (crypto?.randomUUID?.() || String(Math.random())), name: "Big Sisters Induction", date: offsetDate(21), notes: "Baglung cohort" },
+      { id: (crypto?.randomUUID?.() || String(Math.random())), name: "Team Offsite", date: offsetDate(-13), notes: "Wrap‑up & learnings" },
+    ];
+
+    // ---------- Storage ----------
+    const LS_KEY = "event_timeline_v1";
+
+    function loadEvents() {
+      try {
+        const raw = localStorage.getItem(LS_KEY);
+        if (!raw) return DEMO_EVENTS;
+        const parsed = JSON.parse(raw);
+        if (!Array.isArray(parsed)) return DEMO_EVENTS;
+        return parsed.filter(e => e && e.name && e.date);
+      } catch {
+        return DEMO_EVENTS;
+      }
+    }
+
+    function saveEvents(events) {
+      try { localStorage.setItem(LS_KEY, JSON.stringify(events)); } catch {}
+    }
+
+    // ---------- Components ----------
+    function EventCard({ evt, onClick, highlight }) {
+      const info = labelForEvent(evt.date);
+      return (
+        <button
+          onClick={onClick}
+          className={
+            "w-full text-left rounded-2xl border p-4 transition hover:shadow-md focus:outline-none focus:ring " +
+            (highlight ? "border-orange-400 ring-2 ring-orange-200" : "border-gray-200")
+          }
+        >
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <h3 className="text-base md:text-lg font-semibold text-gray-900">{evt.name}</h3>
+              <p className="text-sm text-gray-500 mt-1">{prettyDate(evt.date)}</p>
+              {evt.notes ? <p className="text-sm text-gray-600 mt-1 line-clamp-2">{evt.notes}</p> : null}
+            </div>
+            <span className={"shrink-0 px-2.5 py-1 rounded-full text-xs font-medium " + info.tone}>{info.badge}</span>
+          </div>
+        </button>
+      );
+    }
+
+    function StatsRow({ date }) {
+      const today = startOfDay(new Date());
+      const d = startOfDay(date);
+      const until = daysBetween(today, d);
+      const since = daysBetween(d, today);
+      const absSince = Math.max(0, since);
+      const absUntil = Math.max(0, until);
+      return (
+        <div className="grid grid-cols-2 gap-3 mt-4">
+          <div className="rounded-xl bg-green-50 border border-green-100 p-3">
+            <div className="text-xs text-green-700">Days until</div>
+            <div className="text-2xl font-bold text-green-800">{absUntil}</div>
+          </div>
+          <div className="rounded-xl bg-gray-50 border border-gray-200 p-3">
+            <div className="text-xs text-gray-700">Days since</div>
+            <div className="text-2xl font-bold text-gray-900">{absSince}</div>
+          </div>
+        </div>
+      );
+    }
+
+    function App() {
+      const [events, setEvents] = React.useState(() => loadEvents());
+      const [query, setQuery] = React.useState("");
+      const [draft, setDraft] = React.useState({ name: "", date: "", notes: "" });
+      const [selectedId, setSelectedId] = React.useState(null);
+
+      React.useEffect(() => { saveEvents(events); }, [events]);
+
+      const sorted = React.useMemo(() => {
+        return [...events].sort((a, b) => new Date(a.date) - new Date(b.date));
+      }, [events]);
+
+      const upcoming = React.useMemo(() => sorted.filter(e => daysBetween(new Date(), e.date) >= 0), [sorted]);
+      const past = React.useMemo(() => sorted.filter(e => daysBetween(new Date(), e.date) < 0), [sorted]);
+
+      const next3 = upcoming.slice(0, 3);
+      const prev3 = [...past].reverse().slice(0, 3);
+
+      const exactMatch = React.useMemo(() => {
+        const name = normalizeName(query).toLowerCase();
+        if (!name) return null;
+        return sorted.find(e => e.name.toLowerCase() === name) || null;
+      }, [sorted, query]);
+
+      const partialMatches = React.useMemo(() => {
+        const name = normalizeName(query).toLowerCase();
+        if (!name) return [];
+        return sorted.filter(e => e.name.toLowerCase().includes(name));
+      }, [sorted, query]);
+
+      const selected = React.useMemo(() => {
+        if (exactMatch) return exactMatch;
+        if (selectedId) return events.find(e => e.id === selectedId) || null;
+        return null;
+      }, [exactMatch, selectedId, events]);
+
+      function addEvent(e) {
+        e.preventDefault();
+        const name = normalizeName(draft.name);
+        if (!name || !draft.date) return;
+        const newEvt = { id: (crypto?.randomUUID?.() || String(Math.random())), name, date: draft.date, notes: (draft.notes || "").trim() };
+        const next = [...events, newEvt];
+        setEvents(next);
+        setDraft({ name: "", date: "", notes: "" });
+        setQuery(name);
+        setSelectedId(newEvt.id);
+      }
+
+      function removeEvent(id) {
+        setEvents(evts => evts.filter(e => e.id !== id));
+        if (selectedId === id) setSelectedId(null);
+      }
+
+      return (
+        <div className="min-h-screen w-full bg-gradient-to-b from-orange-50 to-white text-gray-900">
+          <div className="mx-auto max-w-6xl px-4 py-8 md:py-12">
+            <div className="flex items-center justify-between gap-4">
+              <h1 className="text-2xl md:text-3xl font-extrabold tracking-tight">Event Countdown & Timeline</h1>
+              <div className="text-xs md:text-sm text-gray-500">Based on your local time</div>
+            </div>
+
+            <div className="mt-6 grid grid-cols-1 lg:grid-cols-3 gap-6">
+              <div className="lg:col-span-2">
+                <label className="block text-sm font-medium mb-2">Type an event name</label>
+                <input
+                  type="text"
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  placeholder="e.g., Grant Submission – Project RED"
+                  className="w-full rounded-xl border border-gray-300 bg-white px-4 py-3 outline-none focus:ring-4 focus:ring-orange-200"
+                />
+                {query && (
+                  <div className="mt-3 space-y-2">
+                    {partialMatches.length === 0 && (
+                      <div className="text-sm text-gray-600">No matches yet. Add it below to start tracking.</div>
+                    )}
+                    {partialMatches.length > 0 && (
+                      <div className="grid sm:grid-cols-2 gap-3">
+                        {partialMatches.map(e => (
+                          <EventCard key={e.id} evt={e} onClick={() => setSelectedId(e.id)} highlight={selected?.id === e.id} />
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              <form onSubmit={addEvent} className="rounded-2xl border bg-white p-4 md:p-5 shadow-sm">
+                <h2 className="text-lg font-semibold mb-3">Add an event</h2>
+                <div className="space-y-3">
+                  <div>
+                    <label className="block text-sm font-medium">Event name</label>
+                    <input
+                      value={draft.name}
+                      onChange={(e) => setDraft({ ...draft, name: e.target.value })}
+                      className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 focus:outline-none focus:ring-4 focus:ring-orange-200"
+                      placeholder="e.g., Team Offsite"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium">Date</label>
+                    <input
+                      type="date"
+                      value={draft.date}
+                      onChange={(e) => setDraft({ ...draft, date: e.target.value })}
+                      className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 focus:outline-none focus:ring-4 focus:ring-orange-200"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium">Notes (optional)</label>
+                    <textarea
+                      value={draft.notes}
+                      onChange={(e) => setDraft({ ...draft, notes: e.target.value })}
+                      rows={3}
+                      className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 focus:outline-none focus:ring-4 focus:ring-orange-200"
+                      placeholder="Details, location, reminders…"
+                    />
+                  </div>
+                  <button
+                    type="submit"
+                    className="w-full rounded-xl bg-orange-500 text-white font-semibold py-2.5 hover:bg-orange-600 transition"
+                  >
+                    Save event
+                  </button>
+                </div>
+              </form>
+            </div>
+
+            {!query && (
+              <div className="mt-10 grid grid-cols-1 lg:grid-cols-2 gap-6">
+                <section className="rounded-2xl border bg-white p-4 md:p-5">
+                  <header className="flex items-center justify-between">
+                    <h2 className="text-lg font-semibold">Next 3 events</h2>
+                    <div className="text-xs text-gray-500">Soonest first</div>
+                  </header>
+                  <div className="mt-4 grid gap-3">
+                    {next3.length === 0 ? (
+                      <div className="text-sm text-gray-600">No upcoming events. Add one to get started.</div>
+                    ) : next3.map(e => (
+                      <EventCard key={e.id} evt={e} onClick={() => setSelectedId(e.id)} highlight={selected?.id === e.id} />
+                    ))}
+                  </div>
+                </section>
+                <section className="rounded-2xl border bg-white p-4 md:p-5">
+                  <header className="flex items-center justify-between">
+                    <h2 className="text-lg font-semibold">Past 3 events</h2>
+                    <div className="text-xs text-gray-500">Most recent first</div>
+                  </header>
+                  <div className="mt-4 grid gap-3">
+                    {prev3.length === 0 ? (
+                      <div className="text-sm text-gray-600">No past events yet.</div>
+                    ) : prev3.map(e => (
+                      <EventCard key={e.id} evt={e} onClick={() => setSelectedId(e.id)} highlight={selected?.id === e.id} />
+                    ))}
+                  </div>
+                </section>
+              </div>
+            )}
+
+            <div className="mt-10 grid grid-cols-1 lg:grid-cols-3 gap-6">
+              <section className="lg:col-span-2 rounded-2xl border bg-white p-4 md:p-5">
+                <header className="flex items-center justify-between">
+                  <h2 className="text-lg font-semibold">Event details</h2>
+                  {selected && (
+                    <button
+                      onClick={() => removeEvent(selected.id)}
+                      className="text-sm text-red-600 hover:text-red-700"
+                    >Delete</button>
+                  )}
+                </header>
+
+                {!selected && !exactMatch && (
+                  <div className="text-sm text-gray-600 mt-3">Select an event above, or type to search by exact name. When you add a new event, it will appear here.</div>
+                )}
+
+                {selected && (
+                  <div className="mt-4">
+                    <div className="flex items-start justify-between gap-4">
+                      <div>
+                        <div className="text-xl font-bold">{selected.name}</div>
+                        <div className="text-sm text-gray-500">{prettyDate(selected.date)}</div>
+                      </div>
+                      <span className={"h-fit px-2.5 py-1 rounded-full text-xs font-medium " + labelForEvent(selected.date).tone}>
+                        {labelForEvent(selected.date).badge}
+                      </span>
+                    </div>
+                    {selected.notes && (
+                      <p className="mt-3 text-gray-700 whitespace-pre-wrap">{selected.notes}</p>
+                    )}
+                    <StatsRow date={selected.date} />
+                  </div>
+                )}
+              </section>
+
+              <section className="rounded-2xl border bg-white p-4 md:p-5">
+                <header className="flex items-center justify-between">
+                  <h2 className="text-lg font-semibold">All events</h2>
+                  <div className="text-xs text-gray-500">Soonest → latest</div>
+                </header>
+                <div className="mt-3 space-y-2 max-h-[480px] overflow-auto pr-1">
+                  {sorted.length === 0 && (
+                    <div className="text-sm text-gray-600">No events yet.</div>
+                  )}
+                  {sorted.map(e => (
+                    <EventCard key={e.id} evt={e} onClick={() => setSelectedId(e.id)} highlight={selected?.id === e.id} />
+                  ))}
+                </div>
+              </section>
+            </div>
+
+            <div className="mt-10 text-xs text-gray-500">
+              Days are calculated based on your device time zone at midnight (start of day).
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    const root = ReactDOM.createRoot(document.getElementById("root"));
+    root.render(<App />);
+  </script>
+</body>
+</html>
